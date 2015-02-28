@@ -1,0 +1,76 @@
+secrets: secretfile.yml
+
+templates:
+
+  tv:
+    include: series.yml
+    content_filter:
+      reject:
+        - 'password.txt'
+        - '*.wmv'
+    # regexp:
+    #  reject:
+    #    - 'WEB-DL'
+
+  #generic transmission template
+  transmission:
+    transmission:
+      enabled: yes
+      host: '{{secrets.transmission.host}}'
+      ratio: 2
+      username: '{{ secrets.transmission.username }}'
+      password: '{{ secrets.transmission.password }}'
+
+  sceneaccess-tv-rss:
+    rss:
+      url: 'https://sceneaccess.eu/rss?feed=dl&cat=27&passkey={{secrets.sceneaccess.rss_key}}'
+    verify_ssl_certificates: no
+
+  demonoid-tv-rss:
+    rss:
+      url: http://www.demonoid.pw/rss/3.xml
+    verify_ssl_certificates: no
+
+tasks:
+
+  kat-tv:
+    verify_ssl_certificates: no
+    template: [tv, transmission]
+    discover:
+      what:
+        - emit_series: yes
+      from:
+        - kat:
+            category: tv
+    priority: 20
+
+  demonoid-tv:
+    template: [tv, transmission, demonoid-tv-rss]
+    priority: 30
+
+  sceneaccess-tv:
+    template: [tv, transmission, sceneaccess-tv-rss]
+    priority: 40
+
+  completed-files:
+    # template: transmission-files
+    transmission_files:
+        enabled: yes
+        host: '{{secrets.transmission.host}}'
+        username: '{{ secrets.transmission.username }}'
+        password: '{{ secrets.transmission.password }}'
+    exists: 
+      - '/Volumes/External/downloads/'
+    regexp:
+      reject:
+        - \.txt
+        - \.nfo
+        - sample
+      from: title
+    accept_all: yes
+    exec: 
+      allow_background: yes
+      auto_escape: no
+      fail_entries: yes
+      on_input:
+        for_accepted: echo "{{filename}}"

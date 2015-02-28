@@ -1,0 +1,22 @@
+series:
+  settings:
+    tv:
+      exact: yes
+      propers: 3 days
+      quality: 720p+
+
+  tv:
+    - Archer:
+        begin: S06E08
+    - Adventure Time:
+        begin: S06E30
+    - Broad City:
+        begin: S02E07
+    - Community:
+        begin: S06E01
+    - Halt and Catch Fire:
+        begin: S02E01
+    - Last Week Tonight With John Oliver:
+        begin: S02E01
+    - Portlandia:
+        begin: S05E01
