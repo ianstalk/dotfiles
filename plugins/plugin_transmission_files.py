@@ -10,6 +10,7 @@ from flexget.config_schema import one_or_more
 from flexget.plugins.plugin_transmission import TransmissionBase
 
 class PluginTransmissionFiles(TransmissionBase):
+
     """
     Returns the files currently available in the torrents on a transmission instance.
 
@@ -74,8 +75,6 @@ class PluginTransmissionFiles(TransmissionBase):
             self.client.http_handler.set_authentication(self.client.url, config['username'], config['password'])
 
         session = self.client.get_session()
-
-
         torrents = self.client.get_torrents(config['info_hash'])
 
         for torrent in torrents:
@@ -101,6 +100,7 @@ class PluginTransmissionFiles(TransmissionBase):
                     entries.append(entry)
 
         return entries
+
 
 @event('plugin.register')
 def register_plugin():
