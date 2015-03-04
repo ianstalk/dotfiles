@@ -2,12 +2,13 @@ from __future__ import unicode_literals, division, absolute_import
 import os
 import logging
 
-from flexget import plugin, validator
+from flexget import plugin
 from flexget.entry import Entry
 from flexget.event import event
 
 from flexget.config_schema import one_or_more
 from flexget.plugins.plugin_transmission import TransmissionBase
+
 
 class PluginTransmissionFiles(TransmissionBase):
 
@@ -36,7 +37,7 @@ class PluginTransmissionFiles(TransmissionBase):
 
     schema = {
         'anyOf': [
-            {'type': 'object'},
+            {'type': 'boolean'},
             {
                 'type': 'object',
                 'properties': {
@@ -45,7 +46,7 @@ class PluginTransmissionFiles(TransmissionBase):
                     'netrc': {'type': 'string'},
                     'username': {'type': 'string'},
                     'password': {'type': 'string'},
-                    'info_hash': {"oneOf": [{'type': 'string'}, {'type': 'array'}]},
+                    'torrent_info_hash': {"oneOf": [{'type': 'string'}, {'type': 'array'}]},
                     'enabled': {'type': 'boolean'},
                     'onlycomplete': {'type': 'boolean'}
                 },
@@ -56,7 +57,7 @@ class PluginTransmissionFiles(TransmissionBase):
 
     def prepare_config(self, config):
         config = TransmissionBase.prepare_config(self, config)
-        config.setdefault('info_hash', None)
+        config.setdefault('torrent_info_hash', None)
         config.setdefault('onlycomplete', True)
         return config
 
@@ -65,9 +66,9 @@ class PluginTransmissionFiles(TransmissionBase):
         if not config['enabled']:
             return
 
-        if not self.client:
-            self.client = self.create_rpc_client(config)
-        entries = []
+        # force python to garbage collect client rather than reusing the existing object
+        self.client = None
+        self.client = self.create_rpc_client(config)
 
         # Hack/Workaround for http://flexget.com/ticket/2002
         # TODO: Proper fix
@@ -75,7 +76,9 @@ class PluginTransmissionFiles(TransmissionBase):
             self.client.http_handler.set_authentication(self.client.url, config['username'], config['password'])
 
         session = self.client.get_session()
-        torrents = self.client.get_torrents(config['info_hash'])
+        torrents = self.client.get_torrents(config['torrent_info_hash'])
+
+        entries = []
 
         for torrent in torrents:
             dl_dir = torrent.downloadDir
@@ -89,12 +92,12 @@ class PluginTransmissionFiles(TransmissionBase):
                     filename = os.path.basename(relpath)
                     url = 'file://%s' % fullpath[1:]
 
-                    entry = Entry(title=torrent.name, 
+                    entry = Entry(title=filename,
                                   location=relpath,
                                   location_full=fullpath, 
                                   filename=filename, 
                                   url=url, 
-                                  torrent_info_hash=torrent.hashString,
+                                  #torrent_info_hash=torrent.hashString,
                                   size=file['size'])
 
                     entries.append(entry)

@@ -12,11 +12,11 @@ templates:
     #  reject:
     #    - 'WEB-DL'
 
-  #generic transmission template
   transmission:
     transmission:
       enabled: yes
-      host: '{{secrets.transmission.host}}'
+      host: https://hostname/transmission/rpc
+      port: 9099
       ratio: 2
       username: '{{ secrets.transmission.username }}'
       password: '{{ secrets.transmission.password }}'
@@ -32,6 +32,21 @@ templates:
     verify_ssl_certificates: no
 
 tasks:
+
+  iptorrents-tv:
+    template: [tv, transmission]
+    discover:
+      what:
+        - emit_series: yes
+      from:
+        - iptorrents: 
+            rss_key: '{{ secrets.iptorrents.rss_key }}'
+            uid: 31337357
+            password: '{{ secrets.iptorrents.password }}'
+            category: 
+              - TV-x264
+              - TV-XVID 
+    priority: 10
 
   kat-tv:
     verify_ssl_certificates: no
@@ -53,24 +68,30 @@ tasks:
     priority: 40
 
   completed-files:
-    # template: transmission-files
     transmission_files:
-        enabled: yes
-        host: '{{secrets.transmission.host}}'
-        username: '{{ secrets.transmission.username }}'
-        password: '{{ secrets.transmission.password }}'
+      enabled: yes
+      host: https://hostname/transmission/rpc
+      port: 9099
+      username: '{{ secrets.transmission.username }}'
+      password: '{{ secrets.transmission.password }}'
+    # Don't download anything we already have
     exists: 
       - '/Volumes/External/downloads/'
     regexp:
+      # exclude junk files
       reject:
         - \.txt
         - \.nfo
         - sample
+        - \.sfv
       from: title
     accept_all: yes
-    exec: 
+    exec:
       allow_background: yes
       auto_escape: no
       fail_entries: yes
-      on_input:
-        for_accepted: echo "{{filename}}"
+      on_output:
+
+        # launch scp in the background to pull files down locally
+        mkdir -p "/Volumes/External/downloads/$(dirname '{{location}}')";
+        scp uname@host:'{{location_full}}' '/Volumes/External/downloads/{{location}}';
