@@ -1,7 +1,6 @@
 from __future__ import unicode_literals, division, absolute_import
 import logging
 import os
-
 import rarfile
 
 from flexget import plugin
@@ -43,13 +42,13 @@ class RarList(object):
     You can specify either the mask key, in shell file matching format, (see python fnmatch module,)
     or regexp key.
 
-    Example::
+    Example:
 
       rar_list:
         path: /downloads/episode.rar
         mask: *.mkv
 
-    Example::
+    Example:
 
       rar_list:
         path: /downloads/episode.rar
@@ -84,7 +83,7 @@ class RarList(object):
         """Creates entries for the contents of a RAR archive that match the provided pattern."""
 
         import re
-        
+
         self.prepare_config(config)
         entries = []
         match = re.compile(config['regexp'], re.IGNORECASE).match
@@ -128,9 +127,10 @@ class RarList(object):
 
 class RarVolumes(object):
     """
-    Creates entries for the files that comprise a RAR archive.
+    Creates entries for the files that compose a RAR archive (e.g. r01, r02, etc). This is useful 
+    for deleting an archive once it's been extracted.
 
-    Example::
+    Example:
 
       rar_volumes:
         path: /downloads/episode.rar
@@ -173,19 +173,28 @@ class RarVolumes(object):
 
 class RarExtract(object):
     """
-    Extracts files from RAR archives.
+    Extracts files from RAR archives. By default this plugin will extract to the same directory as 
+    the source archive, preserving directory structure from the archive.
 
-    Example::
+    This plugin requires the unrar command line utility to extract compressed archives. If its 
+    location is not specified in your PATH environment variable, you can specify its path using
+    the unrar_tool config value.
+
+    Example:
 
       rar_extract:
         to: '/Volumes/External/TV/Show/Season 1'
-        mask: *.mkv
 
-    Example::
+    Example:
 
-      rar_list:
-        path: /downloads/episode.rar
-        regexp: .*\.(avi|mkv)$
+      rar_extract:
+        to: '/Volumes/External/TV/Show/Season 1'
+        keep_dirs: no
+        unrar_tool: '/unar/unrar'
+
+    Example:
+
+        rar_extract: yes
     """
 
     schema = {
