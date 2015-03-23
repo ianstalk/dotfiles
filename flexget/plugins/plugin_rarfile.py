@@ -2,173 +2,14 @@ from __future__ import unicode_literals, division, absolute_import
 import logging
 import os
 import rarfile
+import re
 
 from flexget import plugin
 from flexget.entry import Entry
 from flexget.event import event
+from flexget.utils.template import render_from_entry, RenderError
 
 log = logging.getLogger('rarfile')
-
-def open_rar(rarpath):
-
-    rar = None
-
-    log.debug('Attempting to open RAR: %s' % rarpath)
-    try:
-        rar = rarfile.RarFile(rarfile=rarpath)
-    except Exception as e:
-        log.warn("Failed to open RAR: %s" % e)
-
-    return rar
-
-
-def to_url(path):
-    """Convert a local file system to URL format"""
-
-    url = path
-
-    if not url.startswith('/'):
-        url = item + '/'
-
-    url = 'file:/' + url
-
-    return url
-
-
-class RarList(object):
-    """
-    Uses a local RAR file as an input and creates entries for files that match mask.
-
-    You can specify either the mask key, in shell file matching format, (see python fnmatch module,)
-    or regexp key.
-
-    Example:
-
-      rar_list:
-        path: /downloads/episode.rar
-        mask: *.mkv
-
-    Example:
-
-      rar_list:
-        path: /downloads/episode.rar
-        regexp: .*\.(avi|mkv)$
-    """
-
-    schema = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'format': 'file'},
-            'mask': {'type': 'string'},
-            'regexp': {'type': 'string', 'format': 'regex'}
-        },
-        'required': ['path'],
-        'additionalProperties': False
-    }
-
-    def prepare_config(self, config):
-        """Prepare the  mask/regexp provided in config"""
-
-        from fnmatch import translate
-
-        config.setdefault('recursive', False)
-        # If mask was specified, turn it in to a regexp
-        if config.get('mask'):
-            config['regexp'] = translate(config['mask'])
-        # If no mask or regexp specified, accept all files
-        if not config.get('regexp'):
-            config['regexp'] = '.'
-
-    def on_task_input(self, task, config):
-        """Creates entries for the contents of a RAR archive that match the provided pattern."""
-
-        import re
-
-        self.prepare_config(config)
-        entries = []
-        match = re.compile(config['regexp'], re.IGNORECASE).match
-        rarpath = config['path']
-
-        rar = open_rar(rarpath)
-
-        if not rar:
-            return
-
-        url_prefix = to_url(rarpath)
-
-        for info in rar.infolist():
-            path = info.filename
-
-            if not match(path):
-                log.debug('File did not match regexp: %s' % path)
-                continue
-
-            log.debug('Found matching file: %s' %path)
-
-            title = os.path.basename(path)
-            url = url_prefix + '::' + path
-            size = info.file_size
-            timestamp = '%02i-%02i-%02i %02i:%02i:%02i' % info.date_time
-
-            entry = Entry (
-                    title = title,
-                    location = path,
-                    rar_path = rarpath,
-                    url = url,
-                    size = size,
-                    timestamp = timestamp
-                )
-
-            entries.append(entry)
-
-        return entries
-
-
-
-class RarVolumes(object):
-    """
-    Creates entries for the files that compose a RAR archive (e.g. r01, r02, etc). This is useful 
-    for deleting an archive once it's been extracted.
-
-    Example:
-
-      rar_volumes:
-        path: /downloads/episode.rar
-    """
-
-    schema = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'format': 'file'}
-        },
-        'required': ['path'],
-        'additionalProperties': False
-    }
-
-    def on_task_input(self, task, config):
-        """Creates entries for the ."""
-
-        entries = []
-        rarpath = config['path']
-        rar = open_rar(rarpath)
-
-        if not rar:
-            return
-
-        for volume in rar.volumelist():
-            
-            url = to_url(volume)
-            title = os.path.basename(volume)
-
-            entry = Entry (
-                    title = title,
-                    location = volume,
-                    url = url
-                )
-
-            entries.append(entry)
-
-        return entries
 
 
 class RarExtract(object):
@@ -182,19 +23,21 @@ class RarExtract(object):
 
     Example:
 
-      rar_extract:
-        to: '/Volumes/External/TV/Show/Season 1'
+      rar_extract: yes
 
     Example:
 
       rar_extract:
-        to: '/Volumes/External/TV/Show/Season 1'
         keep_dirs: no
+        mask: *.mkv
         unrar_tool: '/unar/unrar'
 
     Example:
 
-        rar_extract: yes
+      rar_extract:
+        keep_dirs: yes
+        fail_entries: yes
+        regexp: '.*s\d{1,2}e\d{1,2}.*.mkv'
     """
 
     schema = {
@@ -205,7 +48,11 @@ class RarExtract(object):
                 'properties': {
                     'to': {'type': 'string'},
                     'keep_dirs': {'type': 'boolean'},
-                    'unrar_tool': {'type': 'string'}
+                    'mask': {'type': 'string'},
+                    'regexp': {'type': 'string', 'format': 'regex'},
+                    'fail_entries': {'type': 'boolean'},
+                    'unrar_tool': {'type': 'string'},
+                    'delete_rar': {'type': 'boolean'}
                 },
                 'additionalProperties': False
             }
@@ -218,66 +65,125 @@ class RarExtract(object):
 
         config.setdefault('to', '')
         config.setdefault('keep_dirs', True)
-        config.setdefault('unrar_tool', 'unrar')
+        config.setdefault('fail_entries', False)
+        config.setdefault('unrar_tool', '')
+        config.setdefault('delete_rar', False)
+
+        # If mask was specified, turn it in to a regexp
+        if 'mask' in config:
+            config['regexp'] = translate(config['mask'])
+        # If no mask or regexp specified, accept all files
+        if 'regexp' not in config:
+            config['regexp'] = '.'
+
         return config
 
-    def handle_entry(self, entry, config):
+    def handle_entry(self, entry, match, config):
         """Extract the file listed in entry"""
 
-        rarpath = entry['rar_path']
-        source_path = entry['location']
-        source_file = os.path.basename(source_path)
+        rar_path = entry['location']
+        rar_dir = os.path.dirname(rar_path)
+        rar_file = os.path.basename(rar_path)
 
-        rar = open_rar(rarpath)
-
-
-        # Build the destination path
-        if config['keep_dirs']:
-            path_suffix = source_path
-        else:
-            path_suffix = source_file
+        
+        try:
+            rar = rarfile.RarFile(rarfile=rar_path)
+        except rarfile.RarWarning as e:
+            log.warn('Nonfatal error: %s (%s)' % (rar_path, e))
+        except rarfile.NeedFirstVolume:
+            log.error('Not the first volume: %s' % rar_path)
+            return
+        except rarfile.NotRarFile:
+            log.error('Not a RAR file: %s' % rar_path)
+            return
+        except rarfile.RarFatalError as e:
+            error = 'Failed to open RAR: %s (%s)' (rar_path, e)
+            log.error(error)
+            if config['fail_entries']:
+                entry.fail(error)
+            return
 
         to = config['to']
-        if not to:
-            to = os.path.dirname(rarpath)
-            
-        destination = os.path.join(to, path_suffix)
-        dest_dir = os.path.dirname(destination)
-
-        if not os.path.exists(dest_dir):
-            os.makedirs(dest_dir)
-
-        if not os.path.exists(destination):
-            log.debug('Attempting to extract %s to %s' % (source_file, dest_dir))
+        if to:
             try:
-                rar.extract(source_path, dest_dir)
-                log.info('Extracted %s' % source_file )
-            except Exception as e:
-                log.error('Failed to extract file %s (%s)' % (source_file, e) )
+                to = render_from_entry(to, entry)
+            except RenderError as e:
+                error = 'Could not render path: %s' % to
+                log.error(error)
+
+                if config['fail_entries']:
+                    entry.fail(error)
+                return
         else:
-            log.debug('File already exists')
+            to = rar_dir
+
+        for info in rar.infolist():
+            path = info.filename
+            filename = os.path.basename(path)
+
+
+            if not match(path):
+                log.debug('File did not match regexp: %s' % path)
+                continue
+
+            log.debug('Found matching file: %s' %path)
+
+            
+            if config['keep_dirs']:
+                path_suffix = path
+            else:
+                path_suffix = filename
+            destination = os.path.join(to, path_suffix)
+            dest_dir = os.path.dirname(destination)
+
+            if not os.path.exists(dest_dir):
+                log.debug('Creating path: %s' % dest_dir)
+                os.makedirs(dest_dir)
+
+            if not os.path.exists(destination):
+                log.debug('Attempting to extract: %s to %s' % (rar_file, dest_dir))
+                try:
+                    rar.extract(path, dest_dir)
+                    log.verbose('Extracted: %s' % path )
+                except Exception as e:
+                    error = 'Failed to extract file: %s (%s)' % (path, e)
+                    log.error(error)
+                    entry.fail(error)
+                    return
+            else:
+                log.verbose('File already exists: %s' % dest_dir)
+
+        if config['delete_rar']:
+            volumes = rar.volumelist()
+            rar.close()
+
+            for volume in volumes:
+                log.debug('Deleting volume: %s' % volume)
+                os.remove(volume)
+
+            log.verbose('Deleted RAR: %s' % rar_file)
+        else:
+            rar.close()
 
     def on_task_output(self, task, config):
         """Extracts entries for the  contents of a RAR archive that match the provided pattern."""
+        if isinstance(config, bool) and not config:
+            return
+
         config = self.prepare_config(config)
+
+        match = re.compile(config['regexp'], re.IGNORECASE).match
 
         # Set the path of the unrar tool if it's not specified in PATH
         unrar_tool = config['unrar_tool']
-        if unrar_tool != 'unrar':
+        if unrar_tool:
             rarfile.UNRAR_TOOL = unrar_tool
             log.debug('Set RarFile.unrar_tool to: %s' % unrar_tool)
 
         for entry in task.accepted:
-            if not 'rar_path' in entry:
-                self.log.verbose('Cannot handle %s because it does not have the field rar_path.' % entry['title'])
-                continue
-
-            self.handle_entry(entry, config)
-            
+            self.handle_entry(entry, match, config)     
 
 
 @event('plugin.register')
 def register_plugin():
-    plugin.register(RarList, 'rar_list', api_ver=2)
-    plugin.register(RarVolumes, 'rar_volumes', api_ver=2)
     plugin.register(RarExtract, 'rar_extract', api_ver=2)
