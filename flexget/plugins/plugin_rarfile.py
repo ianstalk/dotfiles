@@ -17,27 +17,31 @@ class RarExtract(object):
     Extracts files from RAR archives. By default this plugin will extract to the same directory as 
     the source archive, preserving directory structure from the archive.
 
-    This plugin requires the unrar command line utility to extract compressed archives. If its 
-    location is not specified in your PATH environment variable, you can specify its path using
-    the unrar_tool config value.
+    This plugin requires the unrar command line utility to extract compressed archives.
 
-    Example:
+    Configuration:
+    
+    to:                    Destination path; supports Jinja2 templating.
+    keep_dirs:             [yes|no] Indicates wether to preserve the directory structure from within 
+                           the RAR in the destination path.
+    mask:                  Shell-style file mask; any matching files will be extracted. When 
+                           specified, this field will override regexp.
+    regexp:                Regular expression pattern; any matching files will be extracted. 
+                             Overriden by mask if specified.
+    fail_entries:          [yes|no] Mark enries as failed when there are potentially recoverable
+                             error in extracting a RAR
+    unrar_tool:            Specifies the path of the unrar tool. Only necessary if its location
+                             is not defined in the operating system's PATH environment variable.
+    delete_rar:            [yes|no]  Delete this RAR after extraction is completed.
 
-      rar_extract: yes
 
     Example:
 
       rar_extract:
-        keep_dirs: no
-        mask: *.mkv
-        unrar_tool: '/unar/unrar'
-
-    Example:
-
-      rar_extract:
+        to: '/Volumes/External/TV/{{series_name}}/Season {{series_season}}/'
         keep_dirs: yes
         fail_entries: yes
-        regexp: '.*s\d{1,2}e\d{1,2}.*.mkv'
+        regexp: '.*s\d{1,2}e\d{1,2}.*\.mkv'
     """
 
     schema = {
@@ -79,7 +83,11 @@ class RarExtract(object):
         return config
 
     def handle_entry(self, entry, match, config):
-        """Extract the file listed in entry"""
+        """
+        Extract matching files into the directory specified
+
+        Optionally delete the original RAR if config.delete_rar is True
+        """
 
         rar_path = entry['location']
         rar_dir = os.path.dirname(rar_path)
