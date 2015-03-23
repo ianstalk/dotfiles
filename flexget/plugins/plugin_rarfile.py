@@ -20,19 +20,21 @@ class RarExtract(object):
     This plugin requires the unrar command line utility to extract compressed archives.
 
     Configuration:
-    
-    to:                    Destination path; supports Jinja2 templating.
-    keep_dirs:             [yes|no] Indicates wether to preserve the directory structure from within 
-                           the RAR in the destination path.
-    mask:                  Shell-style file mask; any matching files will be extracted. When 
-                           specified, this field will override regexp.
-    regexp:                Regular expression pattern; any matching files will be extracted. 
-                             Overriden by mask if specified.
-    fail_entries:          [yes|no] Mark enries as failed when there are potentially recoverable
-                             error in extracting a RAR
-    unrar_tool:            Specifies the path of the unrar tool. Only necessary if its location
-                             is not defined in the operating system's PATH environment variable.
-    delete_rar:            [yes|no]  Delete this RAR after extraction is completed.
+
+    to:             Destination path; supports Jinja2 templating on the input entry. Fields such
+                    as series_name must be populated prior to input into this plugin using
+                    metainfo_series or similar.
+    keep_dirs:      [yes|no] Indicates wether to preserve the directory structure from within the
+                    RAR in the destination path.
+    mask:           Shell-style file mask; any matching files will be extracted. When used, this
+                    field will override regexp.
+    regexp:         Regular expression pattern; any matching files will be extracted. Overriden
+                    by mask if specified.
+    fail_entries:   [yes|no] Mark enries as failed when there are potentially recoverable errors
+                    in extracting a RAR (e.g. a RAR may be corrupted if it's not yet downloaded).
+    unrar_tool:     Specifies the path of the unrar tool. Only necessary if its location is not
+                    defined in the operating system's PATH environment variable.
+    delete_rar:     [yes|no]  Delete this RAR after extraction is completed.
 
 
     Example:
@@ -82,13 +84,14 @@ class RarExtract(object):
 
         return config
 
-    def handle_entry(self, entry, match, config):
+    def handle_entry(self, entry, config):
         """
         Extract matching files into the directory specified
 
         Optionally delete the original RAR if config.delete_rar is True
         """
 
+        match = re.compile(config['regexp'], re.IGNORECASE).match
         rar_path = entry['location']
         rar_dir = os.path.dirname(rar_path)
         rar_file = os.path.basename(rar_path)
@@ -174,13 +177,11 @@ class RarExtract(object):
             rar.close()
 
     def on_task_output(self, task, config):
-        """Extracts entries for the  contents of a RAR archive that match the provided pattern."""
+        """Task handler for rar_extract"""
         if isinstance(config, bool) and not config:
             return
 
         config = self.prepare_config(config)
-
-        match = re.compile(config['regexp'], re.IGNORECASE).match
 
         # Set the path of the unrar tool if it's not specified in PATH
         unrar_tool = config['unrar_tool']
@@ -189,7 +190,7 @@ class RarExtract(object):
             log.debug('Set RarFile.unrar_tool to: %s' % unrar_tool)
 
         for entry in task.accepted:
-            self.handle_entry(entry, match, config)     
+            self.handle_entry(entry, config)     
 
 
 @event('plugin.register')
