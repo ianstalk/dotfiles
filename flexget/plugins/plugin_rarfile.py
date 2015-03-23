@@ -30,8 +30,6 @@ class RarExtract(object):
                     field will override regexp.
     regexp:         Regular expression pattern; any matching files will be extracted. Overriden
                     by mask if specified.
-    fail_entries:   [yes|no] Mark enries as failed when there are potentially recoverable errors
-                    in extracting a RAR (e.g. a RAR may be corrupted if it's not yet downloaded).
     unrar_tool:     Specifies the path of the unrar tool. Only necessary if its location is not
                     defined in the operating system's PATH environment variable.
     delete_rar:     [yes|no]  Delete this RAR after extraction is completed.
@@ -56,7 +54,6 @@ class RarExtract(object):
                     'keep_dirs': {'type': 'boolean'},
                     'mask': {'type': 'string'},
                     'regexp': {'type': 'string', 'format': 'regex'},
-                    'fail_entries': {'type': 'boolean'},
                     'unrar_tool': {'type': 'string'},
                     'delete_rar': {'type': 'boolean'}
                 },
@@ -110,8 +107,6 @@ class RarExtract(object):
         except rarfile.RarFatalError as e:
             error = 'Failed to open RAR: %s (%s)' (rar_path, e)
             log.error(error)
-            if config['fail_entries']:
-                entry.fail(error)
             return
 
         to = config['to']
@@ -122,8 +117,6 @@ class RarExtract(object):
                 error = 'Could not render path: %s' % to
                 log.error(error)
 
-                if config['fail_entries']:
-                    entry.fail(error)
                 return
         else:
             to = rar_dir
@@ -159,7 +152,6 @@ class RarExtract(object):
                 except Exception as e:
                     error = 'Failed to extract file: %s (%s)' % (path, e)
                     log.error(error)
-                    entry.fail(error)
                     return
             else:
                 log.verbose('File already exists: %s' % dest_dir)
