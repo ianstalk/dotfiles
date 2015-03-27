@@ -23,16 +23,17 @@ class RarExtract(object):
 
     to:             Destination path; supports Jinja2 templating on the input entry. Fields such
                     as series_name must be populated prior to input into this plugin using
-                    metainfo_series or similar.
-    keep_dirs:      [yes|no] Indicates wether to preserve the directory structure from within the
-                    RAR in the destination path.
+                    metainfo_series or similar. If no path is specified, RAR contents will be
+                    extraced in the same directory as the RAR itself.
+    keep_dirs:      [yes|no] (default: yes) Indicates whether to preserve the directory 
+                    structure from within the RAR in the destination path.
     mask:           Shell-style file mask; any matching files will be extracted. When used, this
                     field will override regexp.
     regexp:         Regular expression pattern; any matching files will be extracted. Overriden
                     by mask if specified.
     unrar_tool:     Specifies the path of the unrar tool. Only necessary if its location is not
                     defined in the operating system's PATH environment variable.
-    delete_rar:     [yes|no]  Delete this RAR after extraction is completed.
+    delete_rar:     [yes|no] (default: no) Delete this RAR after extraction is completed.
 
 
     Example:
@@ -93,9 +94,13 @@ class RarExtract(object):
         rar_dir = os.path.dirname(rar_path)
         rar_file = os.path.basename(rar_path)
 
+        if not os.path.exists(rar_path):
+            log.warn('File no longer exists: %s' % rar_path)
+            return
         
         try:
             rar = rarfile.RarFile(rarfile=rar_path)
+            log.debug('Successfully opened RAR: %s' % rar_path)
         except rarfile.RarWarning as e:
             log.warn('Nonfatal error: %s (%s)' % (rar_path, e))
         except rarfile.NeedFirstVolume:
@@ -104,9 +109,9 @@ class RarExtract(object):
         except rarfile.NotRarFile:
             log.error('Not a RAR file: %s' % rar_path)
             return
-        except rarfile.RarFatalError as e:
-            error = 'Failed to open RAR: %s (%s)' (rar_path, e)
-            log.error(error)
+        except Exception as e:
+            log.error('Failed to open RAR: %s (%s)' (rar_path, e))
+            entry.fail(e)
             return
 
         to = config['to']
@@ -114,9 +119,8 @@ class RarExtract(object):
             try:
                 to = render_from_entry(to, entry)
             except RenderError as e:
-                error = 'Could not render path: %s' % to
-                log.error(error)
-
+                log.error('Could not render path: %s' % to)
+                entry.fail(e)
                 return
         else:
             to = rar_dir
@@ -150,9 +154,12 @@ class RarExtract(object):
                     rar.extract(path, dest_dir)
                     log.verbose('Extracted: %s' % path )
                 except Exception as e:
-                    error = 'Failed to extract file: %s (%s)' % (path, e)
-                    log.error(error)
-                    return
+                    log.error('Failed to extract file: %s in %s (%s)' % (path, rar_path, e))
+
+                    if os.path.exists(destination):
+                        log.debug('Cleaning up partially extracted file: %s' % destination)
+                        os.remove(destination)
+                    continue
             else:
                 log.verbose('File already exists: %s' % dest_dir)
 
