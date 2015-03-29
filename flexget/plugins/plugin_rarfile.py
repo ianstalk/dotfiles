@@ -1,13 +1,17 @@
 from __future__ import unicode_literals, division, absolute_import
 import logging
 import os
-import rarfile
 import re
 
 from flexget import plugin
 from flexget.entry import Entry
 from flexget.event import event
 from flexget.utils.template import render_from_entry, RenderError
+
+try:
+    import rarfile
+except ImportError:
+    pass
 
 log = logging.getLogger('rarfile')
 
@@ -41,7 +45,6 @@ class RarExtract(object):
       rar_extract:
         to: '/Volumes/External/TV/{{series_name}}/Season {{series_season}}/'
         keep_dirs: yes
-        fail_entries: yes
         regexp: '.*s\d{1,2}e\d{1,2}.*\.mkv'
     """
 
@@ -62,6 +65,7 @@ class RarExtract(object):
             }
         ]
     }
+
 
     def prepare_config(self, config):
         if not isinstance(config, dict):
@@ -161,7 +165,7 @@ class RarExtract(object):
                         os.remove(destination)
                     continue
             else:
-                log.verbose('File already exists: %s' % dest_dir)
+                log.verbose('File already exists: %s' % destination)
 
         if config['delete_rar']:
             volumes = rar.volumelist()
@@ -179,6 +183,16 @@ class RarExtract(object):
         """Task handler for rar_extract"""
         if isinstance(config, bool) and not config:
             return
+
+        # Slightly silly hack so dependency error only throws at execution time
+        try:
+            repr(rarfile)
+        except:
+            raise plugin.DependencyError(issued_by='rar_extract', 
+                             missing='rarfile', 
+                             message='rarfile plugin requires the rarfile Python\
+                                      module.')
+
 
         config = self.prepare_config(config)
 
