@@ -28,15 +28,11 @@ def sftp_connect(conf):
     Helper function to connect to an sftp server
     """
 
-    sftp = None
+    sftp = pysftp.Connection(host=conf.host, username=conf.username,
+                             private_key=conf.private_key, password=conf.password, 
+                             port=conf.port, private_key_pass=conf.private_key_pass)
+    log.debug('Connected to %s' % conf.host)
 
-    try:
-        sftp = pysftp.Connection(host=conf.host, username=conf.username,
-                                 private_key=conf.private_key, password=conf.password, 
-                                 port=conf.port, private_key_pass=conf.private_key_pass)
-        log.debug('Connected to %s' % conf.host)
-    except Exception as e:
-        log.error('Failed to connect to %s (%s)' % (conf.host, e))
     
     return sftp
 
@@ -159,8 +155,11 @@ class SftpList(object):
         log.debug('Connecting to %s' % host)
 
         conn_conf = ConenctionConfig(host, port, username, password, private_key, private_key_pass)
-        sftp = sftp_connect(conn_conf)
-        if not sftp:
+        
+        try:
+            sftp = sftp_connect(conn_conf)
+        except Exception as e:
+            log.error('Failed to connect to %s (%s)' % (conf.host, e))
             return
 
         entries = []
@@ -381,13 +380,18 @@ class SftpDownload(object):
 
         # Download entries by host so we can reuse the connection
         for sftp_config, entries in downloads.iteritems():
-            sftp = sftp_connect(sftp_config)
+            error_message = None
+            try:
+                sftp = sftp_connect(sftp_config)
+            except Exception as e:
+                error_message = 'Failed to connect to %s (%s)' % (conf.host, e)
+                log.error(error_message)
 
             for entry in entries:
                 if sftp:
                     self.download_entry(entry, config, sftp)
                 else:
-                    entry.fail('Failed to connect to SFTP server.')
+                    entry.fail(error_message)
                     continue
             sftp.close()
 
