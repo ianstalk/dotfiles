@@ -374,12 +374,12 @@ class SftpDownload(object):
 
         downloads = defaultdict(list)
 
-        #Group entries by their connection config
+        # Group entries by their connection config
         for entry in task.accepted:
             sftp_config = self.get_sftp_config(entry)
             downloads[sftp_config].append(entry)
 
-
+        # Download entries by host so we can reuse the connection
         for sftp_config, entries in downloads.iteritems():
             sftp = sftp_connect(sftp_config)
 
