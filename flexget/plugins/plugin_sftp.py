@@ -1,5 +1,6 @@
 from __future__ import unicode_literals, division, absolute_import
 from urlparse import urljoin, urlparse
+from collections import defaultdict, namedtuple
 import logging
 import os
 import time
@@ -13,24 +14,29 @@ from flexget.utils.template import render_from_entry, RenderError
 
 log = logging.getLogger('sftp')
 
+ConenctionConfig = namedtuple('ConenctionConfig', ['host', 'port', 'username', 'password', \
+                              'private_key', 'private_key_pass'])
+
 try:
     import pysftp
     logging.getLogger("paramiko").setLevel(logging.WARNING)
 except:
     pysftp = None
 
-def sftp_connect(host, username, private_key, password, port, private_key_pass):
+def sftp_connect(conf):
     """
     Helper function to connect to an sftp server
     """
+
     sftp = None
+
     try:
-        sftp = pysftp.Connection(host=host, username=username, private_key=private_key, \
-                                 password=password, port=port, \
-                                 private_key_pass=private_key_pass)
-        log.debug('Connected to %s' % host)
+        sftp = pysftp.Connection(host=conf.host, username=conf.username,
+                                 private_key=conf.private_key, password=conf.password, 
+                                 port=conf.port, private_key_pass=conf.private_key_pass)
+        log.debug('Connected to %s' % conf.host)
     except Exception as e:
-        log.error('Failed to connect to %s (%s)' % (host, e))
+        log.error('Failed to connect to %s (%s)' % (conf.host, e))
     
     return sftp
 
@@ -152,7 +158,8 @@ class SftpList(object):
         
         log.debug('Connecting to %s' % host)
 
-        sftp = sftp_connect(host, username, private_key, password, port, private_key_pass)
+        conn_conf = ConenctionConfig(host, port, username, password, private_key, private_key_pass)
+        sftp = sftp_connect(conn_conf)
         if not sftp:
             return
 
@@ -253,38 +260,18 @@ class SftpDownload(object):
         'additionalProperties': False
     }
 
-    def prepare_config(self, config, task):
+
+
+    def get_sftp_config(self, entry):
         """
-        Sets defaults for the provided configuration
+        Parses a url and returns a hashable config, source path, and destination path
         """
-        config.setdefault('to', os.path.join(task.manager.config_base, 'temp'))
-
-        return config
-
-    def handle_entry(self, entry, config):
-        """
-        Downloads the file(s) described in entry
-        """
-
-        to = config['to']
-        if to:
-            try:
-                to = render_from_entry(to, entry)
-            except RenderError as e:
-                log.error('Could not render path: %s' % to)
-                entry.fail(e)
-                return
-
-        delete_origin = config['delete_origin']
-
         # parse url
         parsed = urlparse(entry['url'])
         host = parsed.hostname
         username = parsed.username or None
         password = parsed.password or None
         port = parsed.port or 22
-        path = parsed.path or '.'
-
         # get private key info if it exists
         try:
             private_key = entry['private_key']
@@ -295,13 +282,38 @@ class SftpDownload(object):
         except KeyError:
             private_key_pass = None
 
-        sftp = sftp_connect(host, username, private_key, password, port, private_key_pass)
-        if not sftp:
-            return
+        sftp_config = ConenctionConfig(host, port, username, password, private_key, private_key_pass)
+
+        return sftp_config
+
+
+    def prepare_config(self, config, task):
+        """
+        Sets defaults for the provided configuration
+        """
+        config.setdefault('to', os.path.join(task.manager.config_base, 'temp'))
+
+        return config
+
+    def download_entry(self, entry, config, sftp):
+        """
+        Downloads the file(s) described in entry
+        """
+
+        path = urlparse(entry['url']).path or '.'
+        delete_origin = config['delete_origin']
+
+        to = config['to']
+        if to:
+            try:
+                to = render_from_entry(to, entry)
+            except RenderError as e:
+                log.error('Could not render path: %s' % to)
+                entry.fail(e)
+                return
 
         if not sftp.lexists(path):
             log.error('Remote path does not exist: %s' % path)
-            sftp.close()
             return
 
         if not os.path.exists(to):
@@ -321,7 +333,6 @@ class SftpDownload(object):
                 error = 'Failed to download directory %s (%s)' % (path, e)
                 log.error(error)
                 entry.fail(error)
-                sftp.close()
                 return
 
             if delete_origin:
@@ -330,7 +341,6 @@ class SftpDownload(object):
                     sftp.rmdir(dir_name)
                 except Exception as e:
                     log.error('Failed to delete directory %s' % e)
-                    sftp.close()
                     return
 
         elif sftp.isfile(path):
@@ -343,7 +353,6 @@ class SftpDownload(object):
                 error = 'Failed to download file %s (%s)' % (path, e)
                 log.error(error)
                 entry.fail(error)
-                sftp.close()
                 return
 
             if delete_origin:
@@ -351,12 +360,10 @@ class SftpDownload(object):
                     sftp.remove(path)
                 except Exception as e:
                     log.error('Failed to delete file %s (%s)' % (path, e))
-                    sftp.close()
                     return
         else:
             log.warn('Skipping unknown file %s' % path)
 
-        sftp.close()
 
     def on_task_download(self, task, config):
         """
@@ -365,9 +372,24 @@ class SftpDownload(object):
         dependency_check()
         config = self.prepare_config(config, task)
 
+        downloads = defaultdict(list)
+
+        #Group entries by their connection config
         for entry in task.accepted:
-            time.sleep(3)
-            self.handle_entry(entry, config)
+            sftp_config = self.get_sftp_config(entry)
+            downloads[sftp_config].append(entry)
+
+
+        for sftp_config, entries in downloads.iteritems():
+            sftp = sftp_connect(sftp_config)
+
+            for entry in entries:
+                if sftp:
+                    self.download_entry(entry, config, sftp)
+                else:
+                    entry.fail('Failed to connect to SFTP server.')
+                    continue
+            sftp.close()
 
     def on_task_output(self, task, config):
         """Count this as an output plugin."""
