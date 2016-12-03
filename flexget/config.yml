@@ -1,97 +1,305 @@
 secrets: secretfile.yml
 
 templates:
+  ####################
+  # YAML anchors. 
+  ####################
 
-  tv:
-    include: series.yml
+  # This takes advamtage of the fact that flexget doesn't validate anything prefixed with an underscore
+  anchors:
+    # anchor for tranmission config so it can be used with both transmission and clean_transmission
+    _transmission: &transmission
+      enabled: yes
+      host: '{{ secrets.transmission.host }}'
+      port: 9091
+      username: '{{ secrets.transmission.username }}'
+      password: '{{ secrets.transmission.password }}'
+
+    # filesystem "from" achors
+    _fs_base_movies: &fs-base-movies
+      path: /Volumes/Drobo/downloads/movies/
+      recursive: yes
+
+    _fs_base_tv: &fs-base-tv
+      path: /Volumes/Drobo/downloads/tv/
+      recursive: yes
+
+    _fs_base_tv_temp: &fs-base-tv-temp
+      path: /Volumes/Drobo/downloads/tv_temp/
+      recursive: yes
+
+    # filesystem "to" anchors
+    _tv_temp_path: &tv-temp-path
+      to: '/Volumes/Drobo/downloads/tv_temp/'
+
+    _movies_path: &movies-path
+      to: '/Volumes/Drobo/Movies/'
+
+    _series_path: &series-path
+      to: '/Volumes/Drobo/TV/{{series_name}}/Season {{series_season}}/'
+
+    # credentials anchors
+    _trakt_credentials: &trakt-credentials
+        username: '{{secrets.trakt.username}}'
+        account: '{{secrets.trakt.account}}'
+
+    _iptorrents_credentials: &iptorrents-credentials
+      rss_key: '{{ secrets.iptorrents.rss_key }}'
+      uid: '{{ secrets.iptorrents.uid }}'
+      password: '{{secrets.iptorrents.password}}'
+
+    # misc regexes
+    _archive_regex: &archive-regex
+      regexp: '.*\.(rar|r0+[01]|zip)$'
+
+    _video_regex: &video-regex
+      regexp: '.*\.(mkv|avi|mp4|mpg|mov|m4v)$'
+ 
+    _reject_sample: &reject-sample
+      regexp:
+        reject:
+          - sample
+
+  # Trakt templates
+  # These first two are useful both as full templates and as anchors
+  series-trakt-list: &series-trakt-list
+    trakt_list:
+      <<: *trakt-credentials
+      list: 'TV Queue'
+      type: shows
+      strip_dates: yes
+
+  movies-trakt-list: &movies-trakt-list
+    trakt_list:
+      <<: *trakt-credentials
+      list: 'movie queue'
+      type: movies
+
+  trakt-lookup:
+    trakt_lookup:
+      <<: *trakt-credentials
+
+  # pushbullet notification templates
+  series-notify:
+    pushbullet:
+      apikey: '{{secrets.pushbullet.apikey}}'
+      title: 'New Episode'
+      body: '{{series_name}} season {{series_season}} epsiode {{series_episode}}'
+
+  movies-notify:
+    pushbullet:
+      apikey: '{{secrets.pushbullet.apikey}}'
+      title: 'New Movie'
+      body: '{{title}}'
+
+  # exclude torrents with undesirable files
+  content-rejects:
     content_filter:
       reject:
         - 'password.txt'
         - '*.wmv'
-    # regexp:
-    #  reject:
-    #    - 'WEB-DL'
+        - '*.avi'
 
-  transmission:
-    transmission:
-      enabled: yes
-      host: https://hostname/transmission/rpc
-      port: 9099
-      ratio: 2
-      username: '{{ secrets.transmission.username }}'
-      password: '{{ secrets.transmission.password }}'
+  # Settings for all series-related file system tasks
+  series-copy:
+    parsing:
+      series: guessit
+    all_series:
+      parse_only: yes
 
-  sceneaccess-tv-rss:
-    rss:
-      url: 'https://sceneaccess.eu/rss?feed=dl&cat=27&passkey={{secrets.sceneaccess.rss_key}}'
-    verify_ssl_certificates: no
+  # Settings for all file system tasks
+  fs-task:
+    accept_all: yes
+    seen: local
+    no_entries_ok: yes
 
-  demonoid-tv-rss:
-    rss:
-      url: http://www.demonoid.pw/rss/3.xml
-    verify_ssl_certificates: no
+  # Clean up series names for consistency when copying
+  clean-series_name:
+    manipulate:
+      - series_name: 
+          phase: filter
+          replace:
+            regexp: "['\\.]+" # remove commas and apostrophes
+            format: ""
 
 tasks:
 
-  iptorrents-tv:
-    template: [tv, transmission]
+  ####################
+  # TV tasks
+  ####################
+
+  # Get the next episode from Trakt and set it as the beginning for the series plugin
+  series-set-begin:
+    priority: 1
+    next_trakt_episodes:
+      <<: *trakt-credentials
+      list: 'TV Queue'
+      strip_dates: yes
+      context: collected
+      position: next
+    accept_all: yes
+    set_series_begin: yes
+    disable: seen
+
+  # Discover series and add them to Transmission
+  series-discover:
+    priority: 100
+    template: content-rejects
+    configure_series:
+      from:
+        <<: *series-trakt-list
+      settings:
+        quality: 720p+
+        identified_by: ep
+        exact: yes
     discover:
       what:
-        - emit_series: yes
+        - next_series_episodes: yes
       from:
         - iptorrents: 
-            rss_key: '{{ secrets.iptorrents.rss_key }}'
-            uid: 31337357
-            password: '{{ secrets.iptorrents.password }}'
+            <<: *iptorrents-credentials
             category: 
               - TV-x264
-              - TV-XVID 
-    priority: 10
+              - TV-Web-DL 
+        - freshon:
+            username: '{{secrets.freshon.username}}'
+            password: '{{secrets.freshon.password}}'
+            passkey: '{{secrets.freshon.passkey}}'
+            category: hd
+    transmission: 
+      <<: *transmission
+      ratio: 5
+      path: '/Volumes/Drobo/downloads/tv/'
 
-  kat-tv:
-    verify_ssl_certificates: no
-    template: [tv, transmission]
+  # Extract then move archive contents separately. Workaround because the people who
+  # post DC shows on iptorrents like to make "jokes" with their file names
+  series-file-decompress:
+    priority: 103
+    template: fs-task
+    filesystem:
+      <<: *fs-base-tv
+      <<: *archive-regex
+    archives: yes
+    decompress:
+      keep_dirs: no
+      <<: *tv-temp-path
+      <<: *video-regex
+
+  series-file-move-temp:
+    priority: 104
+    template: [series-notify, series-copy, fs-task, clean-series_name]
+    filesystem:
+      <<: *fs-base-tv-temp
+    move:
+      <<: *series-path
+
+  series-file-copy:
+    priority: 104
+    template: [series-notify, series-copy, fs-task, clean-series_name]
+    filesystem:
+      <<: *fs-base-tv
+      <<: *video-regex
+    <<: *reject-sample
+    copy:
+      <<: *series-path
+
+  # Remove discontinued series from Trakt
+  series-trakt-clean:
+    priority: 107
+    template: series-trakt-list
+    disable: seen
+    if:
+      - trakt_collected and (trakt_series_status in ('ended', 'cancelled')): accept
+    list_remove:
+      - <<: *series-trakt-list
+
+  ####################
+  # Movie tasks
+  ####################
+
+  # Get movies from my queue and add them to my FlexGet movie list
+  movies-trakt-list:
+    priority: 108
+    template: movies-trakt-list
+    no_entries_ok: yes
+    accept_all: yes
+    list_add:
+      - movie_list: 'movie-queue'
+
+  # discover movies from movie-queue and add them to transmission
+  movies-discover:
+    priority: 109
+    template: [trakt-lookup, content-rejects]
+    no_entries_ok: yes
     discover:
       what:
-        - emit_series: yes
+        - movie_list: 'movie-queue'
       from:
-        - kat:
-            category: tv
-    priority: 20
-
-  demonoid-tv:
-    template: [tv, transmission, demonoid-tv-rss]
-    priority: 30
-
-  sceneaccess-tv:
-    template: [tv, transmission, sceneaccess-tv-rss]
-    priority: 40
-
-  completed-files:
-    transmission_files:
-      enabled: yes
-      host: https://hostname/transmission/rpc
-      port: 9099
-      username: '{{ secrets.transmission.username }}'
-      password: '{{ secrets.transmission.password }}'
-    # Don't download anything we already have
-    exists: 
-      - '/Volumes/External/downloads/'
-    regexp:
-      # exclude junk files
-      reject:
-        - \.txt
-        - \.nfo
-        - sample
-        - \.sfv
-      from: title
+        - iptorrents: 
+            <<: *iptorrents-credentials
+            category: 
+              - Movie-BD-Rip
+              - Movie-HD-Bluray
+    seen_movies:
+      scope: local
+      matching: strict
+    content_size:
+      min: 1024
+      max: 10000
+    quality: 720p+ bluray
     accept_all: yes
-    exec:
-      allow_background: yes
-      auto_escape: no
-      fail_entries: yes
-      on_output:
+    transmission: 
+      <<: *transmission
+      ratio: 5
+      path: '/Volumes/Drobo/downloads/movies/'
 
-        # launch scp in the background to pull files down locally
-        mkdir -p "/Volumes/External/downloads/$(dirname '{{location}}')";
-        scp uname@host:'{{location_full}}' '/Volumes/External/downloads/{{location}}';
+  # Copy or decompress movies
+  movies-file-decompress:
+    priority: 103
+    template: [fs-task, movies-notify]
+    filesystem:
+      <<: *fs-base-movies
+      <<: *archive-regex
+    archives: yes
+    decompress:
+      keep_dirs: no
+      <<: *movies-path
+      <<: *video-regex
+
+  movies-file-copy:
+    priority: 106
+    template: [fs-task, movies-notify]
+    filesystem:
+      <<: *fs-base-movies
+      <<: *video-regex
+    <<: *reject-sample
+    copy:
+      <<: *movies-path
+
+  # Remove downloaded movies from Trakt movie queue
+  movies-clean-trakt:
+    priority: 110
+    template: [trakt-lookup, movies-trakt-list]
+    disable: [seen, movie_queue]
+    if:
+      - trakt_collected: accept
+    list_remove:
+      - movie_list: 'movie-queue'
+      - <<: *movies-trakt-list
+
+  ####################
+  # General maintenance
+  ####################
+
+  transmission-clean:
+    priority: 999
+    disable: details
+    no_entries_ok: yes
+    clean_transmission:
+      <<: *transmission
+      min_ratio: 5
+      delete_files: yes
+      finished_for: 14 days
+      directories:
+        - "/Volumes/Drobo/downloads/tv/.*"
+        - "/Volumes/Drobo/downloads/movies/.*"
