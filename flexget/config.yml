@@ -5,7 +5,7 @@ templates:
   # YAML anchors. 
   ####################
 
-  # This takes advamtage of the fact that flexget doesn't validate anything prefixed with an underscore
+  # This takes advantage of the fact that flexget doesn't validate anything prefixed with an underscore
   anchors:
     # anchor for tranmission config so it can be used with both transmission and clean_transmission
     _transmission: &transmission
