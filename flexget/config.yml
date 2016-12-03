@@ -81,16 +81,20 @@ templates:
 
   # pushbullet notification templates
   series-notify:
-    pushbullet:
-      apikey: '{{secrets.pushbullet.apikey}}'
+    notify:
+      to:
+        - pushbullet:
+            api_key: '{{secrets.pushbullet.apikey}}'
       title: 'New Episode'
-      body: '{{series_name}} season {{series_season}} epsiode {{series_episode}}'
+      message: '{{series_name}} season {{series_season}} epsiode {{series_episode}}'
 
   movies-notify:
-    pushbullet:
-      apikey: '{{secrets.pushbullet.apikey}}'
+    notify:
+      to:
+        - pushbullet:
+            api_key: '{{secrets.pushbullet.apikey}}'
       title: 'New Movie'
-      body: '{{title}}'
+      message: '{{title}}'
 
   # exclude torrents with undesirable files
   content-rejects:
