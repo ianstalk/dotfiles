@@ -1,4 +1,4 @@
-secrets: secretfile.yml
+variables: secretfile.yml
 
 templates:
   ####################
@@ -10,43 +10,43 @@ templates:
     # anchor for tranmission config so it can be used with both transmission and clean_transmission
     _transmission: &transmission
       enabled: yes
-      host: '{{ secrets.transmission.host }}'
+      host: '{? transmission.host ?}'
       port: 9091
-      username: '{{ secrets.transmission.username }}'
-      password: '{{ secrets.transmission.password }}'
+      username: '{? transmission.username  ?}'
+      password: '{? transmission.password  ?}'
 
     # filesystem "from" achors
     _fs_base_movies: &fs-base-movies
-      path: /Volumes/Drobo/downloads/movies/
+      path: /mnt/drobo/downloads/movies/
       recursive: yes
 
     _fs_base_tv: &fs-base-tv
-      path: /Volumes/Drobo/downloads/tv/
+      path: /mnt/drobo/downloads/tv/
       recursive: yes
 
     _fs_base_tv_temp: &fs-base-tv-temp
-      path: /Volumes/Drobo/downloads/tv_temp/
+      path: /mnt/drobo/downloads/tv_temp/
       recursive: yes
 
     # filesystem "to" anchors
     _tv_temp_path: &tv-temp-path
-      to: '/Volumes/Drobo/downloads/tv_temp/'
+      to: '/mnt/drobo/downloads/tv_temp/'
 
     _movies_path: &movies-path
-      to: '/Volumes/Drobo/Movies/'
+      to: '/mnt/drobo/movies/'
 
     _series_path: &series-path
-      to: '/Volumes/Drobo/TV/{{series_name}}/Season {{series_season}}/'
+      to: '/mnt/drobo/tv/{{series_name}}/Season {{series_season}}/'
 
     # credentials anchors
     _trakt_credentials: &trakt-credentials
-        username: '{{secrets.trakt.username}}'
-        account: '{{secrets.trakt.account}}'
+        username: '{? trakt.username ?}'
+        account: '{? trakt.account ?}'
 
     _iptorrents_credentials: &iptorrents-credentials
-      rss_key: '{{ secrets.iptorrents.rss_key }}'
-      uid: '{{ secrets.iptorrents.uid }}'
-      password: '{{secrets.iptorrents.password}}'
+      rss_key: '{? iptorrents.rss_key ?}'
+      uid: '{? iptorrents.uid ?}'
+      password: '{? iptorrents.password ?}'
 
     # misc regexes
     _archive_regex: &archive-regex
@@ -82,19 +82,21 @@ templates:
   # pushbullet notification templates
   series-notify:
     notify:
-      to:
-        - pushbullet:
-            api_key: '{{secrets.pushbullet.apikey}}'
-      title: 'New Episode'
-      message: '{{series_name}} season {{series_season}} epsiode {{series_episode}}'
+      entries:
+        title: 'New Episode'
+        message: '{{series_name}} season {{series_season}} epsiode {{series_episode}}'
+        via:
+          - pushbullet:
+              api_key: '{? pushbullet.apikey ?}'
 
   movies-notify:
     notify:
-      to:
-        - pushbullet:
-            api_key: '{{secrets.pushbullet.apikey}}'
-      title: 'New Movie'
-      message: '{{title}}'
+      entries:
+        title: 'New Movie'
+        message: '{{title}}'
+        via:
+          - pushbullet:
+              api_key: '{? pushbullet.apikey ?}'
 
   # exclude torrents with undesirable files
   content-rejects:
@@ -123,8 +125,23 @@ templates:
       - series_name: 
           phase: filter
           replace:
-            regexp: "['\\.]+" # remove commas and apostrophes
+            regexp: "['\\.,!]+" # remove commas and apostrophes
             format: ""
+
+schedules:
+  - tasks: ['series-trakt-set-begin', 'series-discover', 'series-trakt-clean', 'movies-trakt-list', 'movies-discover', 'movies-trakt-clean']
+    interval:
+      hours: 1
+  - tasks: ['series-file-copy', 'series-file-decompress', 'series-file-move-temp', 'movies-file-decompress', 'movies-file-copy']
+    interval:
+      minutes: 10
+  - tasks: 'transmission-clean'
+    interval:
+      minutes: 30
+
+web_server:
+  bind: 127.0.0.1
+  port: 5050
 
 tasks:
 
@@ -133,7 +150,8 @@ tasks:
   ####################
 
   # Get the next episode from Trakt and set it as the beginning for the series plugin
-  series-set-begin:
+  # I use Plex-Trakt-Scrobbler to sync what I've collected
+  series-trakt-set-begin:
     priority: 1
     next_trakt_episodes:
       <<: *trakt-credentials
@@ -155,7 +173,7 @@ tasks:
       settings:
         quality: 720p+
         identified_by: ep
-        exact: yes
+        exact: no
     discover:
       what:
         - next_series_episodes: yes
@@ -166,14 +184,14 @@ tasks:
               - TV-x264
               - TV-Web-DL 
         - freshon:
-            username: '{{secrets.freshon.username}}'
-            password: '{{secrets.freshon.password}}'
-            passkey: '{{secrets.freshon.passkey}}'
+            username: '{? freshon.username ?}'
+            password: '{? freshon.password ?}'
+            passkey: '{? freshon.passkey ?}'
             category: hd
     transmission: 
       <<: *transmission
       ratio: 5
-      path: '/Volumes/Drobo/downloads/tv/'
+      path: '/mnt/drobo/downloads/tv/'
 
   # Extract then move archive contents separately. Workaround because the people who
   # post DC shows on iptorrents like to make "jokes" with their file names
@@ -255,7 +273,7 @@ tasks:
     transmission: 
       <<: *transmission
       ratio: 5
-      path: '/Volumes/Drobo/downloads/movies/'
+      path: '/mnt/drobo/downloads/movies/'
 
   # Copy or decompress movies
   movies-file-decompress:
@@ -281,7 +299,7 @@ tasks:
       <<: *movies-path
 
   # Remove downloaded movies from Trakt movie queue
-  movies-clean-trakt:
+  movies-trakt-clean:
     priority: 110
     template: [trakt-lookup, movies-trakt-list]
     disable: [seen, movie_queue]
@@ -305,5 +323,5 @@ tasks:
       delete_files: yes
       finished_for: 14 days
       directories:
-        - "/Volumes/Drobo/downloads/tv/.*"
-        - "/Volumes/Drobo/downloads/movies/.*"
+        - "/mnt/drobo/downloads/tv/.*"
+        - "/mnt/drobo/downloads/movies/.*"
