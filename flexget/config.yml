@@ -84,7 +84,7 @@ templates:
     notify:
       entries:
         title: 'New Episode'
-        message: '{{series_name}} season {{series_season}} epsiode {{series_episode}}'
+        message: '{{series_name}} season {{series_season}} episode {{series_episode}}'
         via:
           - pushbullet:
               api_key: '{? pushbullet.apikey ?}'
@@ -108,8 +108,6 @@ templates:
 
   # Settings for all series-related file system tasks
   series-copy:
-    parsing:
-      series: guessit
     all_series:
       parse_only: yes
 
