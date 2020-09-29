@@ -1,4 +1,4 @@
-variables: secretfile.yml
+variables: variables.yml
 
 templates:
   ####################
@@ -17,20 +17,20 @@ templates:
 
     # filesystem "from" achors
     _fs_base_movies: &fs-base-movies
-      path: /mnt/drobo/downloads/movies/
+      path: '/var/lib/transmission-daemon/downloads/movies'
       recursive: yes
 
     _fs_base_tv: &fs-base-tv
-      path: /mnt/drobo/downloads/tv/
+      path: '/var/lib/transmission-daemon/downloads/tv/'
       recursive: yes
 
     _fs_base_tv_temp: &fs-base-tv-temp
-      path: /mnt/drobo/downloads/tv_temp/
+      path: '/var/lib/flexget/tmp/tv/'
       recursive: yes
 
     # filesystem "to" anchors
     _tv_temp_path: &tv-temp-path
-      to: '/mnt/drobo/downloads/tv_temp/'
+      to: '/var/lib/flexget/tmp/tv/'
 
     _movies_path: &movies-path
       to: '/mnt/drobo/movies/'
@@ -50,15 +50,17 @@ templates:
 
     # misc regexes
     _archive_regex: &archive-regex
-      regexp: '.*\.(rar|r0+[01]|zip)$'
+      regexp: '.*\.(rar|r0+[01]|zip|part0+[01])$'
 
     _video_regex: &video-regex
       regexp: '.*\.(mkv|avi|mp4|mpg|mov|m4v)$'
  
-    _reject_sample: &reject-sample
+    _fs_rejects: &fs-rejects
       regexp:
         reject:
           - sample
+          - tailer
+          - preview
 
   # Trakt templates
   # These first two are useful both as full templates and as anchors
@@ -78,25 +80,6 @@ templates:
   trakt-lookup:
     trakt_lookup:
       <<: *trakt-credentials
-
-  # pushbullet notification templates
-  series-notify:
-    notify:
-      entries:
-        title: 'New Episode'
-        message: '{{series_name}} season {{series_season}} episode {{series_episode}}'
-        via:
-          - pushbullet:
-              api_key: '{? pushbullet.apikey ?}'
-
-  movies-notify:
-    notify:
-      entries:
-        title: 'New Movie'
-        message: '{{title}}'
-        via:
-          - pushbullet:
-              api_key: '{? pushbullet.apikey ?}'
 
   # exclude torrents with undesirable files
   content-rejects:
@@ -123,7 +106,7 @@ templates:
       - series_name: 
           phase: filter
           replace:
-            regexp: "['\\.,!]+" # remove commas and apostrophes
+            regexp: "['\\.,!]+" # remove punctuation
             format: ""
 
 schedules:
@@ -133,9 +116,9 @@ schedules:
   - tasks: ['series-file-copy', 'series-file-decompress', 'series-file-move-temp', 'movies-file-decompress', 'movies-file-copy']
     interval:
       minutes: 10
-  - tasks: 'transmission-clean'
-    interval:
-      minutes: 30
+  #- tasks: 'transmission-clean'
+  #  interval:
+  #    minutes: 30
 
 web_server:
   bind: 127.0.0.1
@@ -151,6 +134,10 @@ tasks:
   # I use Plex-Trakt-Scrobbler to sync what I've collected
   series-trakt-set-begin:
     priority: 1
+    list_clear:
+      what:
+        - entry_list: trakt-shows
+      phase: start
     next_trakt_episodes:
       <<: *trakt-credentials
       list: 'TV Queue'
@@ -159,7 +146,12 @@ tasks:
       position: next
     accept_all: yes
     set_series_begin: yes
+    set:
+      title: "{{series_name | re_replace('[\\'\\.,\\:!]', '')}}"
     disable: seen
+    list_add:
+      - entry_list: trakt-shows
+        
 
   # Discover series and add them to Transmission
   series-discover:
@@ -167,29 +159,25 @@ tasks:
     template: content-rejects
     configure_series:
       from:
-        <<: *series-trakt-list
+        entry_list: trakt-shows
       settings:
         quality: 720p+
         identified_by: ep
-        exact: no
+        exact: yes
     discover:
       what:
         - next_series_episodes: yes
+      interval: 30 minutes
       from:
         - iptorrents: 
             <<: *iptorrents-credentials
             category: 
               - TV-x264
-              - TV-Web-DL 
-        - freshon:
-            username: '{? freshon.username ?}'
-            password: '{? freshon.password ?}'
-            passkey: '{? freshon.passkey ?}'
-            category: hd
+              - TV-Web-DL
     transmission: 
       <<: *transmission
       ratio: 5
-      path: '/mnt/drobo/downloads/tv/'
+      path: '/var/lib/transmission-daemon/downloads/tv/'
 
   # Extract then move archive contents separately. Workaround because the people who
   # post DC shows on iptorrents like to make "jokes" with their file names
@@ -207,7 +195,7 @@ tasks:
 
   series-file-move-temp:
     priority: 104
-    template: [series-notify, series-copy, fs-task, clean-series_name]
+    template: [series-copy, fs-task, clean-series_name]
     filesystem:
       <<: *fs-base-tv-temp
     move:
@@ -215,11 +203,11 @@ tasks:
 
   series-file-copy:
     priority: 104
-    template: [series-notify, series-copy, fs-task, clean-series_name]
+    template: [series-copy, fs-task, clean-series_name]
     filesystem:
       <<: *fs-base-tv
       <<: *video-regex
-    <<: *reject-sample
+    <<: *fs-rejects
     copy:
       <<: *series-path
 
@@ -240,6 +228,10 @@ tasks:
   # Get movies from my queue and add them to my FlexGet movie list
   movies-trakt-list:
     priority: 108
+    list_clear:
+      what:
+        - entry_list: movie-queue
+      phase: start
     template: movies-trakt-list
     no_entries_ok: yes
     accept_all: yes
@@ -266,17 +258,17 @@ tasks:
     content_size:
       min: 1024
       max: 10000
-    quality: 720p+ bluray
+    quality: 1080p+ bluray
     accept_all: yes
     transmission: 
       <<: *transmission
       ratio: 5
-      path: '/mnt/drobo/downloads/movies/'
+      path: '/var/lib/transmission-daemon/downloads/movies/'
 
   # Copy or decompress movies
   movies-file-decompress:
     priority: 103
-    template: [fs-task, movies-notify]
+    template: [fs-task]
     filesystem:
       <<: *fs-base-movies
       <<: *archive-regex
@@ -288,11 +280,11 @@ tasks:
 
   movies-file-copy:
     priority: 106
-    template: [fs-task, movies-notify]
+    template: [fs-task]
     filesystem:
       <<: *fs-base-movies
       <<: *video-regex
-    <<: *reject-sample
+    <<: *fs-rejects
     copy:
       <<: *movies-path
 
@@ -300,26 +292,26 @@ tasks:
   movies-trakt-clean:
     priority: 110
     template: [trakt-lookup, movies-trakt-list]
-    disable: [seen, movie_queue]
+    disable: [seen, seen_movies]
     if:
       - trakt_collected: accept
     list_remove:
       - movie_list: 'movie-queue'
       - <<: *movies-trakt-list
-
+      
   ####################
   # General maintenance
   ####################
-
-  transmission-clean:
-    priority: 999
-    disable: details
-    no_entries_ok: yes
-    clean_transmission:
-      <<: *transmission
-      min_ratio: 5
-      delete_files: yes
-      finished_for: 14 days
-      directories:
-        - "/mnt/drobo/downloads/tv/.*"
-        - "/mnt/drobo/downloads/movies/.*"
+#  transmission-clean:
+#    priority: 999
+#    disable: [seen, seen_info_hash]
+#    from_transmission:
+#      <<: *transmission
+#    if:
+#      - transmission_status != 'seeding': reject
+#      - transmission_secondsSeeding >= 1210000: accept
+#      - transmission_ratio >= 2: accept
+#      - transmission_downloadDir not in ['/var/lib/transmission-daemon/downloads/tv', '/var/lib/transmission-daemon/downloads/movies']: reject
+#    transmission: 
+#      <<: *transmission
+#      action: purge
