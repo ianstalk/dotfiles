@@ -2,7 +2,7 @@ variables: variables.yml
 
 templates:
   ####################
-  # YAML anchors. 
+  # YAML anchors.
   ####################
 
   # This takes advantage of the fact that flexget doesn't validate anything prefixed with an underscore
@@ -17,26 +17,26 @@ templates:
 
     # filesystem "from" achors
     _fs_base_movies: &fs-base-movies
-      path: '/var/lib/transmission-daemon/downloads/movies'
+      path: '/downloads/completed/movies'
       recursive: yes
 
     _fs_base_tv: &fs-base-tv
-      path: '/var/lib/transmission-daemon/downloads/tv/'
+      path: '/downloads/completed/tv/'
       recursive: yes
 
     _fs_base_tv_temp: &fs-base-tv-temp
-      path: '/var/lib/flexget/tmp/tv/'
+      path: '/temp/tv/'
       recursive: yes
 
     # filesystem "to" anchors
     _tv_temp_path: &tv-temp-path
-      to: '/var/lib/flexget/tmp/tv/'
+      to: '/temp/tv/'
 
     _movies_path: &movies-path
-      to: '/mnt/drobo/movies/'
+      to: '/movies/'
 
     _series_path: &series-path
-      to: '/mnt/drobo/tv/{{series_name}}/Season {{series_season}}/'
+      to: '/tv/{{series_name}}/Season {{series_season}}/'
 
     # credentials anchors
     _trakt_credentials: &trakt-credentials
@@ -54,7 +54,7 @@ templates:
 
     _video_regex: &video-regex
       regexp: '.*\.(mkv|avi|mp4|mpg|mov|m4v)$'
- 
+
     _fs_rejects: &fs-rejects
       regexp:
         reject:
@@ -101,9 +101,9 @@ templates:
     no_entries_ok: yes
 
   # Clean up series names for consistency when copying
-  clean-series_name:
+  fs-clean-series_name:
     manipulate:
-      - series_name: 
+      - series_name:
           phase: filter
           replace:
             regexp: "['\\.,!]+" # remove punctuation
@@ -113,16 +113,13 @@ schedules:
   - tasks: ['series-trakt-set-begin', 'series-discover', 'series-trakt-clean', 'movies-trakt-list', 'movies-discover', 'movies-trakt-clean']
     interval:
       hours: 1
-  - tasks: ['series-file-copy', 'series-file-decompress', 'series-file-move-temp', 'movies-file-decompress', 'movies-file-copy']
+  - tasks: ['series-file-copy', 'series-file-decompress', 'series-file-move-temp', 'movies-file-decompress', 'movies-file-copy','movies-move-complete','series-move-complete']
     interval:
-      minutes: 10
-  #- tasks: 'transmission-clean'
-  #  interval:
-  #    minutes: 30
+      minutes: 1
 
-web_server:
-  bind: 127.0.0.1
-  port: 5050
+web_server: yes
+#  bind: 127.0.0.1
+#  port: 5050
 
 tasks:
 
@@ -133,7 +130,7 @@ tasks:
   # Get the next episode from Trakt and set it as the beginning for the series plugin
   # I use Plex-Trakt-Scrobbler to sync what I've collected
   series-trakt-set-begin:
-    priority: 1
+    priority: 100
     list_clear:
       what:
         - entry_list: trakt-shows
@@ -151,33 +148,52 @@ tasks:
     disable: seen
     list_add:
       - entry_list: trakt-shows
-        
+
 
   # Discover series and add them to Transmission
   series-discover:
-    priority: 100
+    priority: 101
     template: content-rejects
     configure_series:
       from:
         entry_list: trakt-shows
       settings:
-        quality: 720p+
+        quality: 1080p+
         identified_by: ep
         exact: yes
     discover:
+      release_estimations: 
+        optimistic: 7 days
       what:
         - next_series_episodes: yes
       interval: 30 minutes
       from:
-        - iptorrents: 
+        - iptorrents:
             <<: *iptorrents-credentials
-            category: 
-              - TV-x264
-              - TV-Web-DL
-    transmission: 
+            category:
+              - TV-all
+      #  - rarbg:
+      #      category:
+      #        - x264 1080p
+        - piratebay:
+            category: video
+            sort_by: seeds
+    transmission:
       <<: *transmission
       ratio: 5
-      path: '/var/lib/transmission-daemon/downloads/tv/'
+      path: '/downloads/incomplete/tv/'
+
+  series-move-complete:
+    priority: 102
+    disable: [seen, seen_info_hash]
+    from_transmission:
+      <<: *transmission
+    if:
+      - transmission_status != 'seeding': reject
+      - transmission_downloadDir == '/downloads/incomplete/tv': accept
+    transmission:
+      <<: *transmission
+      path: '/downloads/completed/tv'
 
   # Extract then move archive contents separately. Workaround because the people who
   # post DC shows on iptorrents like to make "jokes" with their file names
@@ -195,15 +211,15 @@ tasks:
 
   series-file-move-temp:
     priority: 104
-    template: [series-copy, fs-task, clean-series_name]
+    template: [series-copy, fs-task, fs-clean-series_name]
     filesystem:
       <<: *fs-base-tv-temp
     move:
       <<: *series-path
 
   series-file-copy:
-    priority: 104
-    template: [series-copy, fs-task, clean-series_name]
+    priority: 105
+    template: [series-copy, fs-task, fs-clean-series_name]
     filesystem:
       <<: *fs-base-tv
       <<: *video-regex
@@ -213,7 +229,7 @@ tasks:
 
   # Remove discontinued series from Trakt
   series-trakt-clean:
-    priority: 107
+    priority: 106
     template: series-trakt-list
     disable: seen
     if:
@@ -227,7 +243,7 @@ tasks:
 
   # Get movies from my queue and add them to my FlexGet movie list
   movies-trakt-list:
-    priority: 108
+    priority: 201
     list_clear:
       what:
         - entry_list: movie-queue
@@ -240,16 +256,16 @@ tasks:
 
   # discover movies from movie-queue and add them to transmission
   movies-discover:
-    priority: 109
+    priority: 202
     template: [trakt-lookup, content-rejects]
     no_entries_ok: yes
     discover:
       what:
         - movie_list: 'movie-queue'
       from:
-        - iptorrents: 
+        - iptorrents:
             <<: *iptorrents-credentials
-            category: 
+            category:
               - Movie-BD-Rip
               - Movie-HD-Bluray
     seen_movies:
@@ -260,14 +276,26 @@ tasks:
       max: 10000
     quality: 1080p+ bluray
     accept_all: yes
-    transmission: 
+    transmission:
       <<: *transmission
       ratio: 5
-      path: '/var/lib/transmission-daemon/downloads/movies/'
+      path: '/downloads/incomplete/movies/'
+
+  movies-move-complete:
+    priority: 203
+    disable: [seen, seen_info_hash]
+    from_transmission:
+      <<: *transmission
+    if:
+      - transmission_status != 'seeding': reject
+      - transmission_downloadDir == '/downloads/incomplete/movies': accept
+    transmission:
+      <<: *transmission
+      path: '/downloads/completed/movies'
 
   # Copy or decompress movies
   movies-file-decompress:
-    priority: 103
+    priority: 204
     template: [fs-task]
     filesystem:
       <<: *fs-base-movies
@@ -279,7 +307,7 @@ tasks:
       <<: *video-regex
 
   movies-file-copy:
-    priority: 106
+    priority: 205
     template: [fs-task]
     filesystem:
       <<: *fs-base-movies
@@ -290,7 +318,7 @@ tasks:
 
   # Remove downloaded movies from Trakt movie queue
   movies-trakt-clean:
-    priority: 110
+    priority: 206
     template: [trakt-lookup, movies-trakt-list]
     disable: [seen, seen_movies]
     if:
@@ -298,20 +326,3 @@ tasks:
     list_remove:
       - movie_list: 'movie-queue'
       - <<: *movies-trakt-list
-      
-  ####################
-  # General maintenance
-  ####################
-#  transmission-clean:
-#    priority: 999
-#    disable: [seen, seen_info_hash]
-#    from_transmission:
-#      <<: *transmission
-#    if:
-#      - transmission_status != 'seeding': reject
-#      - transmission_secondsSeeding >= 1210000: accept
-#      - transmission_ratio >= 2: accept
-#      - transmission_downloadDir not in ['/var/lib/transmission-daemon/downloads/tv', '/var/lib/transmission-daemon/downloads/movies']: reject
-#    transmission: 
-#      <<: *transmission
-#      action: purge
